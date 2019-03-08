@@ -15,8 +15,6 @@
 # ---
 
 # %%time
-from functools import partial
-
 import nltk
 import pandas as pd
 import logging
@@ -25,6 +23,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 train_sents = list(nltk.corpus.conll2002.iob_sents('esp.train'))
 test_sents = list(nltk.corpus.conll2002.iob_sents('esp.testb'))
 
+
+# ## $(token, pos, tag)^N$ --> $(tokens, tags)$
 
 def get_tokens_tags_from_sents(sents):
     tokens, tags = [], []
@@ -44,7 +44,7 @@ val_tokens, val_tags = get_tokens_tags_from_sents(test_sents)
 idx = 0
 pd.DataFrame([train_tokens[idx], train_tags[idx]])
 
-# ### Prepare dictionaries
+# ### Prepare mappings
 #
 # To train a neural network, we will use two mappings: 
 # - {token}$\to${token id}: address the row in embeddings matrix for the current token;
@@ -136,7 +136,7 @@ def batches_generator(batch_size, tokens, tags,
         yield x[perm_idx, ...], y[perm_idx, ...], batch_lengths
 
 
-# ## Build a recurrent neural network
+# ### Model
 
 import torch
 from torch import nn
@@ -222,8 +222,9 @@ def predict_tags(model, batch_tokens, batch_lengths, batch_tags=None):
 
 
 def my_scorer(true_tags, predicted_tags):
-    logger.info(flat_f1_score(true_tags, predicted_tags, average='weighted', labels=sorted_labels))
-    logger.info(flat_classification_report(
+    score = flat_f1_score(true_tags, predicted_tags, average='weighted', labels=sorted_labels)
+    logger.info(f"f1 score: {score:.3f}")
+    print(flat_classification_report(
         true_tags, predicted_tags, labels=sorted_labels, digits=3
     ))
 
@@ -233,7 +234,7 @@ def eval_model_for_set(model, tokens, tags, scoring=my_scorer):
     model.eval()
     predicted_tags, true_tags, loss = [], [], 0
     with torch.no_grad():
-        for x_batch, y_batch, lengths in batches_generator(1, tokens, tags):
+        for x_batch, y_batch, lengths in batches_generator(len(tokens), tokens, tags):
             padded_predicted_tags, batch_loss = predict_tags(model, x_batch, lengths, y_batch)
             loss += batch_loss
             padded_true_tags = np.vectorize(idx2tag.get)(y_batch.data)
@@ -245,27 +246,6 @@ def eval_model_for_set(model, tokens, tags, scoring=my_scorer):
 
 
 # -
-
-def print_example(training_data, i, model, word2idx, idx2tag):
-    # Note that element i,j of tag_scores is the score for tag j for word i.
-    # Here we don't need to train, so the code is wrapped in torch.no_grad()
-    with torch.no_grad():
-        seq = training_data[0][i]
-        labs = training_data[1][i]
-        inputs = prepare_sequence(seq, word2idx)
-        tag_scores = model(inputs.view(1, len(inputs)), 
-                           torch.tensor([len(seq)]))
-        tags = np.vectorize(idx2tag.get)(torch.argmax(tag_scores, dim=2).data.numpy())
-        print(seq)
-        print()
-        print(tags)
-        print()
-        print(len(seq), tag_scores.size(), tags.shape)
-        print()
-        print(training_data[1][i])
-        print(training_data[1][i] == tags)       
-#print_example(training_data, 79, model, token2idx, idx2tag)
-
 
 # ## Set hyperparams and train the model
 
@@ -304,26 +284,58 @@ for epoch in range(EPOCHS):
         epoch_loss += float(loss)
         clip_grad_norm_(model.parameters(), 5)
         optimiser.step()
+        # disabled for now
         if (idx_batch + 1) % 970 == 0:
-            logger.info(f'Epoch [{epoch + 1}/{EPOCHS}], '
-                  f"Step [{idx_batch + 1}/{len(train_tags)// BATCH_SIZE}], "
-                  f"Loss: {loss:.4f}")
+            logger.info(
+                f'Epoch [{epoch + 1}/{EPOCHS}], '
+                f"Step [{idx_batch + 1}/{len(train_tags)// BATCH_SIZE}], "
+                f"Loss: {loss:.4f}"
+            )
         
     logger.info(f"avg epoch {epoch + 1} train loss: {epoch_loss/(idx_batch + 1):.4f}")
     if ((epoch + 1) % 5) == 0:
         logger.info("**********TRAINING PERFORMANCE*********")
-        loss = eval_model_for_set(model, train_tokens, train_tags)
-        train_loss.append(loss)
+        train_loss.append(eval_model_for_set(model, train_tokens, train_tags))
+        logger.info(f"Loss: {train_loss[-1]}")
         logger.info("**********VALIDATION PERFORMANCE*********")
-        loss = eval_model_for_set(model, val_tokens, val_tags)
-        val_loss.append(loss)
-        logger.info(f"Loss: {loss}")
+        val_loss.append(eval_model_for_set(model, val_tokens, val_tags))
+        logger.info(f"Loss: {val_loss[-1]}")
 
 # print predictions after training
 #print_example(training_data, 123, model, token2idx, idx2tag)
 #print(training_data[1][123])
 # -
 
-eval_model_for_set(model, train_tokens, train_tags)
+# ### Ideas to improve
 
-# ## From hereafter, things to experiment, e.g. Dropout
+# Accuracy:
+# * Dropout
+# * Early stopping
+# * Fine-tunning hyperparams: learning rate (https://www.jeremyjordan.me/nn-learning-rate/), embedding and hidden dimensions
+# * Use trained embeddings
+# * CRF / CNN
+#
+# Coding:
+# * Use `DataLoader` from Pytorch rather than `batches_generator`
+
+
+def print_example(training_data, i, model, word2idx, idx2tag):
+    pass
+    # Note that element i,j of tag_scores is the score for tag j for word i.
+    # Here we don't need to train, so the code is wrapped in torch.no_grad()
+    # with torch.no_grad():
+    #     seq = training_data[0][i]
+    #     labs = training_data[1][i]
+    #     inputs = prepare_sequence(seq, word2idx)
+    #     tag_scores = model(inputs.view(1, len(inputs)),
+    #                        torch.tensor([len(seq)]))
+    #     tags = np.vectorize(idx2tag.get)(torch.argmax(tag_scores, dim=2).data.numpy())
+    #     print(seq)
+    #     print()
+    #     print(tags)
+    #     print()
+    #     print(len(seq), tag_scores.size(), tags.shape)
+    #     print()
+    #     print(training_data[1][i])
+    #     print(training_data[1][i] == tags)
+#print_example(training_data, 79, model, token2idx, idx2tag)
