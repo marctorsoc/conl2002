@@ -153,7 +153,9 @@ sorted_labels = sorted(
 )
 
 
+# +
 from evaluation import eval_model_for_set
+# -
 
 # ## Set hyperparams and train the model
 
