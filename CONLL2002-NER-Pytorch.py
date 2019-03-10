@@ -160,7 +160,7 @@ from evaluation import eval_model_for_set
 EMBEDDING_DIM = 200
 HIDDEN_DIM = 200
 BATCH_SIZE = 32
-EPOCHS = 50
+EPOCHS = 5
 VOCAB_SIZE = len(token2idx)
 TAGSET_SIZE = len(tag2idx)
 PADDING_IDX = token2idx["<PAD>"]
@@ -220,6 +220,10 @@ for epoch in range(EPOCHS):
 #print(training_data[1][123])
 # -
 
+# ### Conclusions
+
+# Really decent, given the simplicity of the model (it's just a BiLSTM with a dense layer afterwards). Lot of overfitting
+
 # ### Ideas to improve
 
 # Accuracy:
@@ -232,24 +236,3 @@ for epoch in range(EPOCHS):
 # Coding:
 # * Use `DataLoader` from Pytorch rather than `batches_generator`
 
-
-def print_example(training_data, i, model, word2idx, idx2tag):
-    pass
-    # Note that element i,j of tag_scores is the score for tag j for word i.
-    # Here we don't need to train, so the code is wrapped in torch.no_grad()
-    # with torch.no_grad():
-    #     seq = training_data[0][i]
-    #     labs = training_data[1][i]
-    #     inputs = prepare_sequence(seq, word2idx)
-    #     tag_scores = model(inputs.view(1, len(inputs)),
-    #                        torch.tensor([len(seq)]))
-    #     tags = np.vectorize(idx2tag.get)(torch.argmax(tag_scores, dim=2).data.numpy())
-    #     print(seq)
-    #     print()
-    #     print(tags)
-    #     print()
-    #     print(len(seq), tag_scores.size(), tags.shape)
-    #     print()
-    #     print(training_data[1][i])
-    #     print(training_data[1][i] == tags)
-#print_example(training_data, 79, model, token2idx, idx2tag)

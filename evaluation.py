@@ -25,9 +25,9 @@ def my_scorer(true_tags, predicted_tags, sorted_labels):
         true_tags, predicted_tags, average='weighted', labels=sorted_labels
     )
     logger.info(f"f1 score: {score:.3f}")
-    print(flat_classification_report(
-        true_tags, predicted_tags, labels=sorted_labels, digits=3
-    ))
+    print(flat_classification_report(true_tags, predicted_tags,
+                                     labels=sorted_labels, digits=3),
+          flush=True)
 
 
 def eval_model_for_set(model, tokens, tags, token2idx, tag2idx, sorted_labels):
