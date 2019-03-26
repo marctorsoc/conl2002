@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S')
 train_sents = list(nltk.corpus.conll2002.iob_sents('esp.train'))
-test_sents = list(nltk.corpus.conll2002.iob_sents('esp.testb'))
+val_sents = list(nltk.corpus.conll2002.iob_sents('esp.testb'))
 
 
 # ## $(token, pos, tag)^N$ --> $(tokens, tags)$
@@ -32,7 +32,7 @@ test_sents = list(nltk.corpus.conll2002.iob_sents('esp.testb'))
 # %%time
 from data_preparation import get_tokens_tags_from_sents
 train_tokens, train_tags = get_tokens_tags_from_sents(train_sents)
-val_tokens, val_tags = get_tokens_tags_from_sents(test_sents)
+val_tokens, val_tags = get_tokens_tags_from_sents(val_sents)
 
 # You should always understand what kind of data you deal with. For this purpose, you can print the data running the following cell:
 
@@ -53,7 +53,7 @@ pd.DataFrame([train_tokens[idx], train_tags[idx]])
 #  - `<PAD>` token for padding sentence to the same length when we create batches of sentences. index = 1
 
 # +
-special_tokens = ['<UNK>', '<PAD>']
+special_tokens = ['<UNK>']
 special_tags = ['O']
 
 # Create dictionaries
@@ -91,12 +91,17 @@ torch.manual_seed(1)
 
 
 class LSTMTagger(nn.Module):
-
-    def __init__(self, batch_size, embedding_dim, hidden_dim, vocab_size,
-                 tagset_size, padding_idx, verbose=False, bidirectional=False):
+    """
+    This class will define the following three blocks:
+    1. Embedding layer: from word index to embedding
+    2. (Bi)LSTM: from embedding to a representation of dimension hidden_dim
+    3. Hidden2tag: a dense layer from hidden_dim to the tag space
+    """
+    def __init__(self, embedding_dim, hidden_dim, vocab_size, tagset_size,
+                 padding_idx, verbose=False, bidirectional=False):
         super(LSTMTagger, self).__init__()
         self.hidden_dim = hidden_dim
-        self.batch_size = batch_size
+        self.padding_idx = padding_idx
         self.word_embeddings = nn.Embedding(
             vocab_size, embedding_dim, padding_idx=padding_idx
         )
@@ -124,8 +129,6 @@ class LSTMTagger(nn.Module):
         # undo the packing operation
         lstm_out, _ = pad_packed_sequence(lstm_out, batch_first=True)
         if self.verbose: print(f"lstm_out: {lstm_out.size()}")
-        # (batch_size, seq_len, hidden_dim) --> (batch_size * seq_len, hidden_dim)
-        s = lstm_out.contiguous().view(-1, lstm_out.shape[2])
         # (batch_size * seq_len, hidden_dim) --> (batch_size * seq_len, tag_dim)
         tag_space = self.hidden2tag(lstm_out)
         if self.verbose: print(f"tag space: {tag_space.size()}")
@@ -134,9 +137,8 @@ class LSTMTagger(nn.Module):
         if self.verbose: print(f"tag scores: {tag_scores.size()}")
         return tag_scores
 
-    @staticmethod
-    def loss(y_hat, y):
-        criterion = nn.CrossEntropyLoss(ignore_index=-1)
+    def loss(self, y_hat, y):
+        criterion = nn.CrossEntropyLoss(ignore_index=self.padding_idx)
         return criterion(y_hat.view(-1, y_hat.size()[2]), y.view(-1))
 
 
@@ -153,21 +155,21 @@ sorted_labels = sorted(
 )
 
 
-# +
 from evaluation import eval_model_for_set
-# -
 
 # ## Set hyperparams and train the model
 
-EMBEDDING_DIM = 200
-HIDDEN_DIM = 200
+EMBEDDING_DIM = 50
+HIDDEN_DIM = 30
 BATCH_SIZE = 32
-EPOCHS = 50
+EPOCHS = 5
 VOCAB_SIZE = len(token2idx)
 TAGSET_SIZE = len(tag2idx)
-PADDING_IDX = token2idx["<PAD>"]
+PADDING_IDX = -1
+PRINT_EVERY_NBATCHES = 100
+PRINT_EVERY_NEPOCHS = 1
 training_data = (train_tokens, train_tags)
-model = LSTMTagger(BATCH_SIZE, EMBEDDING_DIM, HIDDEN_DIM, VOCAB_SIZE,
+model = LSTMTagger(EMBEDDING_DIM, HIDDEN_DIM, VOCAB_SIZE,
                    TAGSET_SIZE, PADDING_IDX, verbose=False, bidirectional=True)
 optimiser = torch.optim.Adam(model.parameters(), lr=0.005)
 
@@ -197,7 +199,7 @@ for epoch in range(EPOCHS):
         clip_grad_norm_(model.parameters(), 5)
         optimiser.step()
         # disabled for now
-        if (idx_batch + 1) % 970 == 0:
+        if (idx_batch + 1) % PRINT_EVERY_NBATCHES == 0:
             logger.info(
                 f'Epoch [{epoch + 1}/{EPOCHS}], '
                 f"Step [{idx_batch + 1}/{len(train_tags)// BATCH_SIZE}], "
@@ -205,7 +207,7 @@ for epoch in range(EPOCHS):
             )
 
     logger.info(f"avg epoch {epoch + 1} train loss: {epoch_loss/(idx_batch + 1):.4f}")
-    if ((epoch + 1) % 5) == 0:
+    if ((epoch + 1) % PRINT_EVERY_NEPOCHS) == 0:
         logger.info("**********TRAINING PERFORMANCE*********")
         train_loss.append(eval_model_for_set(
             model, train_tokens, train_tags, token2idx, tag2idx, sorted_labels
@@ -222,6 +224,10 @@ for epoch in range(EPOCHS):
 #print(training_data[1][123])
 # -
 
+# ### Conclusions
+
+# Really decent, given the simplicity of the model (it's just a BiLSTM with a dense layer afterwards). Lot of overfitting
+
 # ### Ideas to improve
 
 # Accuracy:
@@ -234,24 +240,3 @@ for epoch in range(EPOCHS):
 # Coding:
 # * Use `DataLoader` from Pytorch rather than `batches_generator`
 
-
-def print_example(training_data, i, model, word2idx, idx2tag):
-    pass
-    # Note that element i,j of tag_scores is the score for tag j for word i.
-    # Here we don't need to train, so the code is wrapped in torch.no_grad()
-    # with torch.no_grad():
-    #     seq = training_data[0][i]
-    #     labs = training_data[1][i]
-    #     inputs = prepare_sequence(seq, word2idx)
-    #     tag_scores = model(inputs.view(1, len(inputs)),
-    #                        torch.tensor([len(seq)]))
-    #     tags = np.vectorize(idx2tag.get)(torch.argmax(tag_scores, dim=2).data.numpy())
-    #     print(seq)
-    #     print()
-    #     print(tags)
-    #     print()
-    #     print(len(seq), tag_scores.size(), tags.shape)
-    #     print()
-    #     print(training_data[1][i])
-    #     print(training_data[1][i] == tags)
-#print_example(training_data, 79, model, token2idx, idx2tag)

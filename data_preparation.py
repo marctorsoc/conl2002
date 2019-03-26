@@ -31,7 +31,7 @@ def build_dict(tokens_or_tags, special_tokens):
 
 def prepare_sequence(seq, to_ix):
     def to_ix_defaults(t):
-        return to_ix.get(t, to_ix.get("<UNK>", to_ix['O']))
+        return to_ix.get(t) or 0
     return torch.tensor(np.vectorize(to_ix_defaults)(seq), dtype=torch.long)
 
 
