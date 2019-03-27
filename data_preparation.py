@@ -1,76 +1,79 @@
-from collections import defaultdict
-
+import nltk
 import torch
-import numpy as np
 from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import Dataset, DataLoader
+import numpy as np
+
+from vocabulary import Vocabulary
 
 
-def get_tokens_tags_from_sents(sents):
-    tokens, tags = [], []
-    for sent in sents:
-        sent_tokens, _, sent_tags = list(zip(*sent))
-        tokens.append(sent_tokens)
-        tags.append(sent_tags)
-    return tokens, tags
+class ConLL2002DataSet:
+    def __init__(self, data_set):
+        self.data = nltk.corpus.conll2002.iob_sents(data_set)
+
+    def get_tokens_tags_from_sents(self):
+        tokens, tags = [], []
+        for doc in self.data:
+            doc_tokens, _, doc_tags = list(zip(*doc))
+            tokens.append(doc_tokens)
+            tags.append(doc_tags)
+        return tokens, tags
 
 
-def build_dict(tokens_or_tags, special_tokens):
-    # Create a dictionary with default value 0
-    tok2idx = defaultdict(lambda: 0)
-    ind = 0
-    for t in special_tokens:
-        tok2idx[t] = ind
-        ind += 1
-    for sam in tokens_or_tags:
-        for t in sam:
-            if t not in special_tokens and t not in tok2idx:
-                tok2idx[t] = ind
-                ind += 1
-    return tok2idx, dict((v, k) for k, v in tok2idx.items())
+class Vectorizer(object):
+    def __init__(self, use_start_end=True, use_pad=True):
+        self.word_vocab = Vocabulary(
+            use_unks=True, use_start_end=use_start_end, use_pad=use_pad
+        )
+        # start, end, and unk tags will be assigned the same tag: "O"
+        self.tag_vocab = Vocabulary(
+            use_unks=True, use_start_end=False, unk_token="O", use_pad=use_pad
+        )
+
+    def fit(self, docs, tags):
+        for doc, doc_tags in zip(docs, tags):
+            for word, tag in zip(doc, doc_tags):
+                self.word_vocab[word], self.tag_vocab[tag]
+        self.word_vocab.freeze()
+        self.tag_vocab.freeze()
+
+    @staticmethod
+    def map_sequence(vocab, x):
+        return torch.tensor(np.vectorize(vocab.__getitem__)(x), dtype=torch.long)
+
+    @staticmethod
+    def map_sequence_back(vocab, x):
+        return np.vectorize(vocab.get_index)(x)
+
+    def transform(self, all_docs, all_tags):
+        transformed_docs, transformed_tags = [], []
+        for doc, tags in zip(all_docs, all_tags):
+            transformed_docs.append(__class__.map_sequence(self.word_vocab, doc))
+            transformed_tags.append(__class__.map_sequence(self.tag_vocab, tags))
+        return VectorizedDataset(transformed_docs, transformed_tags)
 
 
-def prepare_sequence(seq, to_ix):
-    def to_ix_defaults(t):
-        return to_ix.get(t) or 0
-    return torch.tensor(np.vectorize(to_ix_defaults)(seq), dtype=torch.long)
+class VectorizedDataset(Dataset):
+    """Dataset where the vectorizer has already been applied"""
+
+    def __init__(self, input, target):
+        self.input = input
+        self.target = target
+
+    def __len__(self):
+        return len(self.input)
+
+    def __getitem__(self, index):
+        return self.input[index], self.target[index], len(self.input[index])
 
 
-def batches_generator(batch_size, tokens, tags, token2idx, tag2idx,
-                      shuffle=True, allow_smaller_last_batch=True, seed=8):
-    """Generates padded batches of tokens and tags."""
-    # TODO: use DataLoader from Pytorch for this
-    # tokens is a list of docs, and each docs is a list of tokens
-    # SHUFFLE
-    n_samples = len(tokens)
-    np.random.seed(seed)
-    if shuffle:
-        order = np.random.permutation(n_samples)
-    else:
-        order = np.arange(n_samples)
-
-    # NUMBER OF BATCHES
-    n_batches = n_samples // batch_size
-    # and n_samples / batch_size not integer, put the leftovers in last batch
-    if allow_smaller_last_batch and n_samples % batch_size:
-        n_batches += 1
-
-    # for each batch, get the docs, labels and real lengths and yield them
-    for k in range(n_batches):
-        batch_start = k * batch_size
-        batch_end = min((k + 1) * batch_size, n_samples)
-        x, y = [], []
-        batch_lengths = torch.zeros(batch_end - batch_start, dtype=torch.int32)
-        # x will be a list of lists of indices (one list of indices per doc in this batch)
-        for sample_in_batch_index, sample_idx in enumerate(order[batch_start: batch_end]):
-            try:
-                x.append(prepare_sequence(tokens[sample_idx], token2idx))
-                y.append(prepare_sequence(tags[sample_idx], tag2idx))
-            except Exception as marc:
-                print(marc)
-                import pdb; pdb.set_trace()
-            batch_lengths[sample_in_batch_index] = len(tags[sample_idx])
-        x = pad_sequence(x, batch_first=True, padding_value=token2idx["<PAD>"])
-        y = pad_sequence(y, batch_first=True, padding_value=-1)
-        batch_lengths, perm_idx = batch_lengths.sort(0, descending=True)
-        # yield each batch
-        yield x[perm_idx, ...], y[perm_idx, ...], batch_lengths
+def pad_and_sort_batch(data_loader_batch):
+    """
+    data_loader_batch should be a list of (sequence, target, length) tuples...
+    Returns a padded tensor of sequences sorted from longest to shortest,
+    """
+    tokens, tags, lengths = tuple(zip(*data_loader_batch))
+    x = pad_sequence(tokens, batch_first=True, padding_value=0)
+    y = pad_sequence(tags, batch_first=True, padding_value=0)
+    lengths, perm_idx = torch.IntTensor(lengths).sort(0, descending=True)
+    return x[perm_idx, ...], y[perm_idx, ...], lengths

@@ -5,8 +5,7 @@ import numpy as np
 from sklearn_crfsuite.metrics import flat_f1_score, flat_classification_report
 from torch.utils.data import DataLoader
 
-from data_preparation import batches_generator
-from data_preparation2 import pad_and_sort_batch
+from data_preparation import pad_and_sort_batch
 
 logger = logging.getLogger(__name__)
 

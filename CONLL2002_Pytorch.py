@@ -27,7 +27,7 @@ logging.basicConfig(
 # ## $(token, pos, tag)^N$ --> $(tokens, tags)$
 
 # %%time
-from data_preparation2 import ConLL2002DataSet
+from data_preparation import ConLL2002DataSet
 
 train_tokens, train_tags = ConLL2002DataSet("esp.train").get_tokens_tags_from_sents()
 val_tokens, val_tags = ConLL2002DataSet("esp.testb").get_tokens_tags_from_sents()
@@ -51,7 +51,7 @@ pd.DataFrame([train_tokens[idx], train_tags[idx]])
 #  - `<END>` index = 3 (not used here)
 
 # +
-from data_preparation2 import Vectorizer
+from data_preparation import Vectorizer
 
 vectorizer = Vectorizer(use_start_end=False, use_pad=True)
 vectorizer.fit(train_tokens, train_tags)
@@ -153,7 +153,7 @@ class LSTMTagger(nn.Module):
 
 from evaluation import eval_model_for_set
 from torch.utils.data import DataLoader
-from data_preparation2 import pad_and_sort_batch
+from data_preparation import pad_and_sort_batch
 
 # ## Set hyperparams and train the model
 
