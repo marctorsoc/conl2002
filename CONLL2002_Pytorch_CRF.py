@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # ---
 # jupyter:
 #   jupytext:
@@ -13,25 +14,23 @@
 #     name: marc
 # ---
 
-import nltk
 import pandas as pd
 import logging
 
 
-# %%time
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S')
-train_sents = list(nltk.corpus.conll2002.iob_sents('esp.train'))
-test_sents = list(nltk.corpus.conll2002.iob_sents('esp.testb'))
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+)
 
 
 # ## $(token, pos, tag)^N$ --> $(tokens, tags)$
 
 # %%time
-from data_preparation import get_tokens_tags_from_sents
-train_tokens, train_tags = get_tokens_tags_from_sents(train_sents)
-val_tokens, val_tags = get_tokens_tags_from_sents(test_sents)
+from data_preparation2 import ConLL2002DataSet
+
+train_tokens, train_tags = ConLL2002DataSet("esp.train").get_tokens_tags_from_sents()
+val_tokens, val_tags = ConLL2002DataSet("esp.testb").get_tokens_tags_from_sents()
 
 # You should always understand what kind of data you deal with. For this purpose, you can print the data running the following cell:
 
@@ -40,27 +39,33 @@ pd.DataFrame([train_tokens[idx], train_tags[idx]])
 
 # ### Prepare mappings
 #
-# To train a neural network, we will use two mappings:
-# - {token}$\to${token id}: address the row in embeddings matrix for the current token;
-# - {tag}$\to${tag id}: one-hot ground truth probability distribution vectors for computing the loss at the output of the network.
+# A neural network needs to work with word indices, not next. Then, we need to learn
+# the vocabulary of tokens and tags. This is accomplished with the Vectorizer, and then
+# used to transform the datasets into VectorizedDataset objects
 #
-
-
-# After implementing the function *build_dict* you can make dictionaries for tokens and tags. Special tokens will be:
-#  - `<UNK>` token for out of vocabulary tokens; index = 0
-#  - `O` tag for no entity OR unknown tag. index = 0
+# Some special tokens in the vocabulary:
+#  - `<PAD>` token for padding sentence to the same length when we create batches of
+#  sentences. index = 0
+#  - `<UNK>` token for out of vocabulary tokens; index = 1
+#  - `<START>` index = 2 (not used here)
+#  - `<END>` index = 3 (not used here)
 
 # +
-special_tokens = ['<UNK>']
-special_tags = ['O']
+from data_preparation2 import Vectorizer
 
-# Create dictionaries
-from data_preparation import build_dict
-token2idx, idx2token = build_dict(train_tokens, special_tokens)
-tag2idx, idx2tag = build_dict(train_tags, special_tags)
-
-
+vectorizer = Vectorizer(use_start_end=False, use_pad=True)
+vectorizer.fit(train_tokens, train_tags)
+train_data = vectorizer.transform(train_tokens, train_tags)
+val_data = vectorizer.transform(val_tokens, val_tags)
 # -
+
+print(train_tokens[0])
+print(train_data.input[0])
+vectorizer.map_sequence_back(vectorizer.word_vocab, train_data.input[0])
+
+print(train_tags[0])
+print(train_data.target[0])
+vectorizer.map_sequence_back(vectorizer.tag_vocab, train_data.target[0])
 
 # ### Generate batches
 #
@@ -72,20 +77,15 @@ tag2idx, idx2tag = build_dict(train_tags, special_tags)
 # for padding parts. We provide the batching function *batches_generator*
 # readily available for you to save time.
 
-from data_preparation import batches_generator
-
-
 # ### Model
 
 import torch
 from torch import nn
 import torch.nn.functional as F
 from torch import optim
-from torch.nn.utils.rnn import (
-    pack_padded_sequence, pad_packed_sequence
-)
-from torch.autograd import Variable
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from torch.nn.utils import clip_grad_norm_
+
 torch.manual_seed(1)
 
 # (batch_size, seq_len, 1) --> (batch_size, seq_len, tag_dim)
@@ -99,138 +99,6 @@ from models import LSTMTagger
 from pytorchcrf import CRF
 
 
-# class CRF(nn.Module):
-#
-#     START_TAG = -1
-#     STOP_TAG = -2
-#
-#     def __init__(self, tagset_size, gpu):
-#         super(CRF, self).__init__()
-#         # Matrix of transition parameters.  Entry i,j is the score of
-#         # transitioning from i to j.
-#         self.tagset_size = tagset_size
-#         # # We add 2 here, because of START_TAG and STOP_TAG
-#         # # transitions (f_tag_size, t_tag_size), transition value
-#         # from f_tag to t_tag
-#         init_transitions = torch.zeros(self.tagset_size + 2,
-#                                        self.tagset_size + 2)
-#         init_transitions[:, self.START_TAG] = -10000.0
-#         init_transitions[self.STOP_TAG, :] = -10000.0
-#         init_transitions[:, 0] = -10000.0
-#         init_transitions[0, :] = -10000.0
-#         self.transitions = nn.Parameter(init_transitions)
-#
-#     @staticmethod
-#     def _argmax(vec):
-#         # return the argmax as a python int
-#         _, idx = torch.max(vec, 1)
-#         return idx.item()
-#
-#     # Compute log sum exp in a numerically stable way for the forward algorithm
-#     def _log_sum_exp(self, vec):
-#         max_score = vec[0, self._argmax(vec)]
-#         max_score_broadcast = max_score.view(1, -1).expand(1, vec.size()[1])
-#         return max_score + \
-#                torch.log(torch.sum(torch.exp(vec - max_score_broadcast)))
-#
-#     def _forward_alg(self, feats):
-#         # Do the forward algorithm to compute the partition function
-#         init_alphas = torch.full((1, self.tagset_size), -10000.)
-#         # START_TAG has all of the score.
-#         init_alphas[0][self.START_TAG] = 0.
-#
-#         # Wrap in a variable so that we will get automatic backprop
-#         forward_var = init_alphas
-#
-#         # Iterate through the sentence
-#         for feat in feats:
-#             alphas_t = []  # The forward tensors at this timestep
-#             for next_tag in range(self.tagset_size):
-#                 # broadcast the emission score: it is the same regardless of
-#                 # the previous tag
-#                 emit_score = feat[next_tag].view(
-#                     1, -1).expand(1, self.tagset_size)
-#                 # the ith entry of trans_score is the score of transitioning to
-#                 # next_tag from i
-#                 trans_score = self.transitions[next_tag].view(1, -1)
-#                 # The ith entry of next_tag_var is the value for the
-#                 # edge (i -> next_tag) before we do log-sum-exp
-#                 next_tag_var = forward_var + trans_score + emit_score
-#                 # The forward variable for this tag is log-sum-exp of all the
-#                 # scores.
-#                 alphas_t.append(self._log_sum_exp(next_tag_var).view(1))
-#             forward_var = torch.cat(alphas_t).view(1, -1)
-#         terminal_var = forward_var + self.transitions[self.STOP_TAG]
-#         alpha = self._log_sum_exp(terminal_var)
-#         return alpha
-#
-#     def _score_sentence(self, feats, tags):
-#         # Gives the score of a provided tag sequence
-#         score = torch.zeros(1)
-#         tags = torch.cat(
-#             [torch.tensor([self.START_TAG], dtype=torch.long), tags])
-#         for i, feat in enumerate(feats):
-#             score = score + \
-#                     self.transitions[tags[i + 1], tags[i]] + feat[tags[i + 1]]
-#         score = score + self.transitions[self.STOP_TAG, tags[-1]]
-#         return score
-#
-#     def _viterbi_decode(self, feats):
-#         backpointers = []
-#
-#         # Initialize the viterbi variables in log space
-#         init_vvars = torch.full((1, self.tagset_size), -10000.)
-#         init_vvars[0][self.START_TAG] = 0
-#
-#         # forward_var at step i holds the viterbi variables for step i-1
-#         forward_var = init_vvars
-#         for feat in feats:
-#             bptrs_t = []  # holds the backpointers for this step
-#             viterbivars_t = []  # holds the viterbi variables for this step
-#
-#             for next_tag in range(self.tagset_size):
-#                 # next_tag_var[i] holds the viterbi variable for tag i at the
-#                 # previous step, plus the score of transitioning
-#                 # from tag i to next_tag.
-#                 # We don't include the emission scores here because the max
-#                 # does not depend on them (we add them in below)
-#                 next_tag_var = forward_var + self.transitions[next_tag]
-#                 best_tag_id = self._argmax(next_tag_var)
-#                 bptrs_t.append(best_tag_id)
-#                 viterbivars_t.append(next_tag_var[0][best_tag_id].view(1))
-#             # Now add in the emission scores, and assign forward_var to the set
-#             # of viterbi variables we just computed
-#             forward_var = (torch.cat(viterbivars_t) + feat).view(1, -1)
-#             backpointers.append(bptrs_t)
-#
-#         # Transition to STOP_TAG
-#         terminal_var = forward_var + self.transitions[self.STOP_TAG]
-#         best_tag_id = self._argmax(terminal_var)
-#         path_score = terminal_var[0][best_tag_id]
-#
-#         # Follow the back pointers to decode the best path.
-#         best_path = [best_tag_id]
-#         for bptrs_t in reversed(backpointers):
-#             best_tag_id = bptrs_t[best_tag_id]
-#             best_path.append(best_tag_id)
-#         # Pop off the start tag (we dont want to return that to the caller)
-#         start = best_path.pop()
-#         assert start == self.START_TAG  # Sanity check
-#         best_path.reverse()
-#         return path_score, best_path
-#
-#     def neg_log_likelihood(self, lstm_feats, tags):
-#         forward_score = self._forward_alg(lstm_feats)
-#         gold_score = self._score_sentence(lstm_feats, tags)
-#         return forward_score - gold_score
-#
-#     def forward(self, lstm_feats):  # dont confuse this with _forward_alg above.
-#         # Find the best path, given the emission scores (here the features
-#         # obtained from the BiLSTM)
-#         score, tag_seq = self._viterbi_decode(lstm_feats)
-#         return score, tag_seq
-#
-#
 class LSTM_CRFTagger(nn.Module):
     # based on SeqLabel from NCRF++
     # This is a wrapper to use the CRF after LSTMtagger
@@ -274,18 +142,6 @@ class LSTM_CRFTagger(nn.Module):
             return self.crf.decode(tag_scores, mask)
 
 
-# ### Evaluation helpers
-
-labels_to_score = list(tag2idx.keys())
-labels_to_score.remove('O')
-labels_to_score
-
-# group B and I results
-sorted_labels = sorted(
-    labels_to_score,
-    key=lambda name: (name[1:], name[0])
-)
-
 
 from evaluation import eval_model_for_set
 
@@ -298,10 +154,8 @@ PRINT_EVERY_NEPOCHS = 1
 lstm_args = {
     "embedding_dim": 30,
     "hidden_dim": 10,
-    "vocab_size": len(token2idx), 
-    "tagset_size": len(tag2idx), 
-    "padding_idx": -1,
-    "verbose": False, 
+    "vocab_size": len(vectorizer.word_vocab),
+    "tagset_size": len(vectorizer.tag_vocab),
     "bidirectional": False
 }
 model = LSTM_CRFTagger(lstm_args)
@@ -310,13 +164,12 @@ optimiser = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
 # +
 # %%time
-# print predictions before training
-#print_example(training_data, 123, model, token2idx, idx2tag)
 logger.info("START!")
 train_loss, val_loss = [], []
 for epoch in range(EPOCHS):
-    train_loader = batches_generator(
-        BATCH_SIZE, train_tokens, train_tags, token2idx, tag2idx, seed=epoch
+    # TODO: review how to set the seed
+    train_loader = DataLoader(
+        train_data, batch_size=BATCH_SIZE, shuffle=True, collate_fn=pad_and_sort_batch
     )
     epoch_loss = 0
     model.train()
@@ -336,7 +189,7 @@ for epoch in range(EPOCHS):
         # disabled for now
         if (idx_batch + 1) % PRINT_EVERY_NBATCHES == 0:
             logger.info(
-                f'Epoch [{epoch + 1}/{EPOCHS}], '
+                f"Epoch [{epoch + 1}/{EPOCHS}], "
                 f"Step [{idx_batch + 1}/{len(train_tags)// BATCH_SIZE}], "
                 f"Loss: {loss:.4f}"
             )
@@ -344,14 +197,10 @@ for epoch in range(EPOCHS):
     logger.info(f"avg epoch {epoch + 1} train loss: {epoch_loss/(idx_batch + 1):.4f}")
     if ((epoch + 1) % PRINT_EVERY_NEPOCHS) == 0:
         logger.info("**********TRAINING PERFORMANCE*********")
-        train_loss.append(eval_model_for_set(
-            model, train_tokens, train_tags, token2idx, tag2idx, sorted_labels, True
-        ))
+        train_loss.append(eval_model_for_set(model, train_data, vectorizer, True))
         logger.info(f"Loss: {train_loss[-1]}")
         logger.info("**********VALIDATION PERFORMANCE*********")
-        val_loss.append(eval_model_for_set(
-            model, val_tokens, val_tags, token2idx, tag2idx, sorted_labels, True
-        ))
+        val_loss.append(eval_model_for_set(model, val_data, vectorizer, True))
         logger.info(f"Loss: {val_loss[-1]}")
 
 # print predictions after training
@@ -374,24 +223,3 @@ for epoch in range(EPOCHS):
 # Coding:
 # * Use `DataLoader` from Pytorch rather than `batches_generator`
 
-
-def print_example(training_data, i, model, word2idx, idx2tag):
-    pass
-    # Note that element i,j of tag_scores is the score for tag j for word i.
-    # Here we don't need to train, so the code is wrapped in torch.no_grad()
-    # with torch.no_grad():
-    #     seq = training_data[0][i]
-    #     labs = training_data[1][i]
-    #     inputs = prepare_sequence(seq, word2idx)
-    #     tag_scores = model(inputs.view(1, len(inputs)),
-    #                        torch.tensor([len(seq)]))
-    #     tags = np.vectorize(idx2tag.get)(torch.argmax(tag_scores, dim=2).data.numpy())
-    #     print(seq)
-    #     print()
-    #     print(tags)
-    #     print()
-    #     print(len(seq), tag_scores.size(), tags.shape)
-    #     print()
-    #     print(training_data[1][i])
-    #     print(training_data[1][i] == tags)
-#print_example(training_data, 79, model, token2idx, idx2tag)
