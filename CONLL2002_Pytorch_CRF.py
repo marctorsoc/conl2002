@@ -14,7 +14,7 @@
 #     name: marc
 # ---
 
-import pandas as pd
+import pandas as pd, numpy as np
 import logging
 
 
@@ -32,7 +32,8 @@ from data_preparation import ConLL2002DataSet
 train_tokens, train_tags = ConLL2002DataSet("esp.train").get_tokens_tags_from_sents()
 val_tokens, val_tags = ConLL2002DataSet("esp.testb").get_tokens_tags_from_sents()
 
-# You should always understand what kind of data you deal with. For this purpose, you can print the data running the following cell:
+# You should always understand what kind of data you deal with. For this purpose, you
+# can print the data running the following cell:
 
 idx = 0
 pd.DataFrame([train_tokens[idx], train_tags[idx]])
@@ -81,9 +82,7 @@ vectorizer.map_sequence_back(vectorizer.tag_vocab, train_data.target[0])
 
 import torch
 from torch import nn
-import torch.nn.functional as F
 from torch import optim
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from torch.nn.utils import clip_grad_norm_
 
 torch.manual_seed(1)
@@ -96,67 +95,65 @@ from models import LSTMTagger
 # sequence using Viterbi decoding
 # import from NCRF++
 # from ncrfpp import CRF
-from pytorchcrf import CRF
+from torch.autograd import Variable
+from allennlp.modules import ConditionalRandomField
+from allennlp.models import CrfTagger
 
 
 class LSTM_CRFTagger(nn.Module):
-    # based on SeqLabel from NCRF++
-    # This is a wrapper to use the CRF after LSTMtagger
+    # based on CRFtagger from AllenNLP
+    # This is a wrapper to use the CRF after LSTMtagger, so the flow is:
+    # embedding -- lstm -- hidden2tag (dense layer) -- CRF
 
-    def __init__(self, lstm_args, gpu=False):
+    def __init__(self, lstm_args):
         super(LSTM_CRFTagger, self).__init__()
-        ## add two more labels for downlayer lstm, use original label size for CRF
-        tagset_size = lstm_args["tagset_size"]
-        # lstm_args["tagset_size"] += 2
         self.lstm = LSTMTagger(**lstm_args)
-        # self.crf = CRF(tagset_size, gpu)
-        self.crf = CRF(tagset_size, batch_first=True)
+        self.crf = ConditionalRandomField(
+            lstm_args["tagset_size"], include_start_end_transitions=True
+        )
 
     @staticmethod
     def _get_mask(X_lens, batch_size, seq_len):
         mask = Variable(torch.zeros((batch_size, seq_len))).byte()
         for idx, X_len in enumerate(X_lens):
-            mask[idx, :X_len] = torch.Tensor([1]*int(X_len))
+            mask[idx, :X_len] = torch.ones(X_len)
         return mask
 
-    def loss(self, tag_scores, mask, y_hat):
-        # ncrf++
-        # total_loss = self.crf.neg_log_likelihood_loss(tag_scores, mask, y_hat)
-        total_loss = self.crf.forward(tag_scores, y_hat, mask)
-        # normalise by batch_size
-        return total_loss / tag_scores.size(0)
+    def forward(self, input, input_lens):
+        logits = self.lstm.forward(input, input_lens, apply_softmax=False)
+        batch_size, seq_len, _ = logits.size()
+        mask = __class__._get_mask(input_lens, batch_size, seq_len)
+        return logits, mask
 
-    def forward(self, X, X_lens, nbest=None):
-        tag_scores = self.lstm(X, X_lens)
-        batch_size, seq_len = X.size()
-        mask = self._get_mask(X_lens, batch_size, seq_len)
-        # use this for training
-        if not nbest:
-            return tag_scores, mask
-        # use this for testing
-        # TODO: check speed of _viterbi_decode_nbest vs _viterbi_decode. If nbest=1
-        # maybe it's better to use _viterbi_decode
-        else:
-            # scores, tag_seq = self.crf._viterbi_decode_nbest(tag_scores, mask, nbest)
-            # return scores, tag_seq
-            return self.crf.decode(tag_scores, mask)
+    def loss(self, logits, mask, target):
+        """Use negative log-likelihood as loss"""
+        log_likelihood = self.crf(logits, target, mask)
+        return -log_likelihood
 
+    def decode(self, logits, mask):
+        """Return most probable sequence using Viterbi"""
+        best_paths = self.crf.viterbi_tags(logits, mask)
+        # Just get the tags and ignore the score
+        return [best_sequence for best_sequence, score in best_paths]
 
 
 from evaluation import eval_model_for_set
+from torch.utils.data import DataLoader
+from data_preparation import pad_and_sort_batch
+
 
 # ## Set hyperparams and train the model
 
 BATCH_SIZE = 32
-EPOCHS = 50
+EPOCHS = 5
 PRINT_EVERY_NBATCHES = 100
 PRINT_EVERY_NEPOCHS = 1
 lstm_args = {
-    "embedding_dim": 30,
-    "hidden_dim": 10,
+    "embedding_dim": 200,
+    "hidden_dim": 200,
     "vocab_size": len(vectorizer.word_vocab),
     "tagset_size": len(vectorizer.tag_vocab),
-    "bidirectional": False
+    "bidirectional": True
 }
 model = LSTM_CRFTagger(lstm_args)
 LEARNING_RATE = 0.005
@@ -221,5 +218,4 @@ for epoch in range(EPOCHS):
 # * _viterbi_decode_nbest vs _viterbi_decode when nbest=1
 #
 # Coding:
-# * Use `DataLoader` from Pytorch rather than `batches_generator`
-
+# * Clean NCRF++ implementation, probably more efficient

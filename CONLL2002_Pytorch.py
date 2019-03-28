@@ -235,7 +235,3 @@ for epoch in range(EPOCHS):
 # * Fine-tunning hyperparams: learning rate (https://www.jeremyjordan.me/nn-learning-rate/), embedding and hidden dimensions
 # * Use trained embeddings
 # * CRF / CNN
-#
-# Coding:
-# * Use `DataLoader` from Pytorch rather than `batches_generator`
-

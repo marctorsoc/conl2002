@@ -24,16 +24,15 @@ def predict_tags(model, batch_tokens, batch_lengths, batch_tags=None, using_crf=
             loss = model.loss(tag_scores, batch_tags)
             return predicted_tags, loss
     else:
-        predicted_tags = model(batch_tokens, batch_lengths, nbest=1)
-        max_len = max(map(len, predicted_tags))
-        for idx in range(len(predicted_tags)):
-            predicted_tags[idx] += [0] * (max_len - len(predicted_tags[idx]))
-        predicted_tags = np.array(predicted_tags)
-        predicted_tags = np.vectorize(idx2tag.get)(predicted_tags)
+        tag_scores, mask = model(batch_tokens, batch_lengths)
+        predicted_tags = model.decode(tag_scores, mask)
+        # for test, just return predicted_tags
         if batch_tags is None:
             return predicted_tags
+        # for train/validation sets, return the loss as well
         else:
-            return predicted_tags, 0
+            loss = model.loss(tag_scores, mask, batch_tags)
+            return predicted_tags, loss
 
 
 def my_scorer(true_tags, predicted_tags, sorted_labels):
@@ -50,18 +49,8 @@ def my_scorer(true_tags, predicted_tags, sorted_labels):
 
 
 def eval_model_for_set(model, data, vectorizer, using_crf=False):
-    """
-    TODO: documentation
-    Computes NER quality measures given model and a dataset
-    :param model:
-    :param tokens:
-    :param tags:
-    :param token2idx:
-    :param tag2idx:
-    :param sorted_labels:
-    :param using_crf:
-    :return:
-    """
+    """Computes NER quality measures given model and a dataset"""
+    # TODO: documentation
     model.eval()
     predicted_tags, true_tags, loss = [], [], 0
     with torch.no_grad():
@@ -71,18 +60,26 @@ def eval_model_for_set(model, data, vectorizer, using_crf=False):
         # TODO: this is extremely ugly
         for batch in loader:
             x_batch, y_batch, lengths = batch
-
         padded_pred_tags, loss = predict_tags(
             model, x_batch, lengths, y_batch, using_crf
         )
-        padded_pred_tags = vectorizer.map_sequence_back(
-            vectorizer.tag_vocab, padded_pred_tags
-        )
+        try:
+            padded_pred_tags = vectorizer.map_sequence_back(
+                vectorizer.tag_vocab, padded_pred_tags
+            )
+        except:
+            padded_pred_tags = [
+                np.vectorize(vectorizer.tag_vocab.get_index)(doc_padded_pred_tags)
+                for doc_padded_pred_tags in padded_pred_tags
+            ]
         padded_true_tags = vectorizer.map_sequence_back(
             vectorizer.tag_vocab, y_batch.data
         )
         for x, y, l in zip(padded_pred_tags, padded_true_tags, lengths):
-            predicted_tags.append(x[:l])
+            if not using_crf:
+                predicted_tags.append(x[:l])
             true_tags.append(y[:l])
+        if using_crf:
+            predicted_tags = padded_pred_tags
         my_scorer(true_tags, predicted_tags, sorted(vectorizer.tag_vocab.keys()))
         return loss
