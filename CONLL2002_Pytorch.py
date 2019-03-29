@@ -177,7 +177,6 @@ model = LSTMTagger(
 LEARNING_RATE = 0.005
 optimiser = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-# +
 # %%time
 logger.info("START!")
 train_loss, val_loss = [], []
@@ -217,11 +216,6 @@ for epoch in range(EPOCHS):
         logger.info("**********VALIDATION PERFORMANCE*********")
         val_loss.append(eval_model_for_set(model, val_data, vectorizer))
         logger.info(f"Loss: {val_loss[-1]}")
-
-# print predictions after training
-# print_example(training_data, 123, model, token2idx, idx2tag)
-# print(training_data[1][123])
-# -
 
 # ### Conclusions
 

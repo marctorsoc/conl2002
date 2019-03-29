@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # ---
 # jupyter:
 #   jupytext:
@@ -14,7 +13,7 @@
 #     name: marc
 # ---
 
-import pandas as pd, numpy as np
+import pandas as pd
 import logging
 
 
@@ -93,11 +92,8 @@ from models import LSTMTagger
 
 # (batch_size, seq_len, tag_dim) --> (batch_size, seq_len, 1), selecting the best tag
 # sequence using Viterbi decoding
-# import from NCRF++
-# from ncrfpp import CRF
 from torch.autograd import Variable
 from allennlp.modules import ConditionalRandomField
-from allennlp.models import CrfTagger
 
 
 class LSTM_CRFTagger(nn.Module):
@@ -159,7 +155,6 @@ model = LSTM_CRFTagger(lstm_args)
 LEARNING_RATE = 0.005
 optimiser = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-# +
 # %%time
 logger.info("START!")
 train_loss, val_loss = [], []
@@ -199,11 +194,6 @@ for epoch in range(EPOCHS):
         logger.info("**********VALIDATION PERFORMANCE*********")
         val_loss.append(eval_model_for_set(model, val_data, vectorizer, True))
         logger.info(f"Loss: {val_loss[-1]}")
-
-# print predictions after training
-#print_example(training_data, 123, model, token2idx, idx2tag)
-#print(training_data[1][123])
-# -
 
 # ### Ideas to improve
 
