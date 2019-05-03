@@ -60,7 +60,7 @@ class CRFTagger(nn.Module):
 
     def __init__(self, kwargs):
         super(CRFTagger, self).__init__()
-        if kwargs["use_lstm"]:
+        if kwargs.pop("use_lstm", False):
             self.lstm = LSTMTagger(**kwargs)
         self.crf = ConditionalRandomField(
             kwargs["tagset_size"], include_start_end_transitions=True
@@ -90,3 +90,40 @@ class CRFTagger(nn.Module):
         # Just get the tags and ignore the score
         return [best_sequence for best_sequence, score in best_paths]
 
+
+class CRFTagger2(nn.Module):
+    # based on CRFtagger from NCRF++
+    # This is a wrapper to use the CRF after LSTMtagger, so the flow is:
+    # embedding -- lstm -- hidden2tag (dense layer) -- CRF
+
+    def __init__(self, kwargs):
+        super(CRFTagger, self).__init__()
+        if kwargs.pop("use_lstm", False):
+            self.lstm = LSTMTagger(**kwargs)
+        self.crf = ConditionalRandomField(
+            kwargs["tagset_size"], include_start_end_transitions=True
+        )
+
+    @staticmethod
+    def _get_mask(X_lens, batch_size, seq_len):
+        mask = Variable(torch.zeros((batch_size, seq_len))).byte()
+        for idx, X_len in enumerate(X_lens):
+            mask[idx, :X_len] = torch.ones(X_len)
+        return mask
+
+    def forward(self, input, input_lens):
+        logits = self.lstm.forward(input, input_lens, apply_softmax=False)
+        batch_size, seq_len, _ = logits.size()
+        mask = __class__._get_mask(input_lens, batch_size, seq_len)
+        return logits, mask
+
+    def loss(self, logits, mask, target):
+        """Use negative log-likelihood as loss"""
+        log_likelihood = self.crf(logits, target, mask)
+        return -log_likelihood
+
+    def decode(self, logits, mask):
+        """Return most probable sequence using Viterbi"""
+        best_paths = self.crf.viterbi_tags(logits, mask)
+        # Just get the tags and ignore the score
+        return [best_sequence for best_sequence, score in best_paths]

@@ -12,12 +12,13 @@ class ConLL2002DataSet:
         self.data = nltk.corpus.conll2002.iob_sents(data_set)
 
     def get_tokens_tags_from_sents(self):
-        tokens, tags = [], []
+        tokens, pos, tags = [], [], []
         for doc in self.data:
-            doc_tokens, _, doc_tags = list(zip(*doc))
+            doc_tokens, doc_pos, doc_tags = list(zip(*doc))
             tokens.append(doc_tokens)
+            pos.append(doc_pos)
             tags.append(doc_tags)
-        return tokens, tags
+        return tokens, pos, tags
 
 
 class Vectorizer(object):
