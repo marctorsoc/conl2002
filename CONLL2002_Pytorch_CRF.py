@@ -88,7 +88,7 @@ torch.manual_seed(1)
 
 # (batch_size, seq_len, 1) --> (batch_size, seq_len, tag_dim)
 # the dimension = 1 is the one giving the token indexes
-from models import LSTMTagger
+from models import LstmTagger
 
 # (batch_size, seq_len, tag_dim) --> (batch_size, seq_len, 1), selecting the best tag
 # sequence using Viterbi decoding
@@ -103,7 +103,7 @@ class LSTM_CRFTagger(nn.Module):
 
     def __init__(self, lstm_args):
         super(LSTM_CRFTagger, self).__init__()
-        self.lstm = LSTMTagger(**lstm_args)
+        self.lstm = LstmTagger(**lstm_args)
         self.crf = ConditionalRandomField(
             lstm_args["tagset_size"], include_start_end_transitions=True
         )

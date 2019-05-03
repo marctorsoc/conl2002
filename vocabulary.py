@@ -50,7 +50,8 @@ class Vocabulary(object):
         self._forced_unks = set()
         self._next_index = 0
         self._frozen = False  # used to avoid the vocabulary to keep growing
-        self._frequency_threshold = -1
+        # minimum count to include a token in the vocabulary, 0 to disable
+        self._frequency_threshold = 0
 
         # pad token for use in masked recurrent networks
         # usually need to be the 0th index

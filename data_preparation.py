@@ -22,14 +22,15 @@ class ConLL2002DataSet:
 
 
 class Vectorizer(object):
-    def __init__(self, use_start_end=True, use_pad=True):
-        self.word_vocab = Vocabulary(
-            use_unks=True, use_start_end=use_start_end, use_pad=use_pad
-        )
-        # start, end, and unk tags will be assigned the same tag: "O"
-        self.tag_vocab = Vocabulary(
-            use_unks=True, use_start_end=False, unk_token="O", use_pad=use_pad
-        )
+    def __init__(self, use_start_end=True, use_pad=True, unk_token="O"):
+        kwargs = {
+            "use_unks": True,
+            "use_start_end": use_start_end,
+            "unk_token": unk_token,
+            "use_pad": use_pad,
+        }
+        self.word_vocab = Vocabulary(**kwargs)
+        self.tag_vocab = Vocabulary(**kwargs)
 
     def fit(self, docs, tags):
         for doc, doc_tags in zip(docs, tags):
