@@ -14,6 +14,7 @@ class DataPod:
         vocabs: a dictionary with Vocabulary objects for each feature
     """
     def __init__(self, data):
+        """data: list of document data, """
         self.feature_metadata = self.initial_feature_data(data)
         self.feature_metadata = np.bool(1)
 
