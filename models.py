@@ -107,8 +107,6 @@ class CrfTagger2(nn.Module):
         self.average_batch = kwargs.pop("average_batch", True)
         self.crf = NCRFpp_CRF(kwargs["tagset_size"], self.gpu)
         if kwargs.pop("use_lstm", False):
-            # TODO: careful here, NCRFpp expects the original tagset_size (without
-            #  start, stop)
             kwargs["tagset_size"] += 2
             self.lstm = LstmTagger(**kwargs)
 
@@ -133,10 +131,14 @@ class CrfTagger2(nn.Module):
             total_loss = total_loss / batch_size
         return total_loss
 
-    def decode(self, logits, mask):
+    def decode(self, logits, mask, return_scores=False):
         scores, tag_seq = self.crf.viterbi_decode(logits, mask)
-        return scores, tag_seq
+        if return_scores:
+            return scores, tag_seq
+        return tag_seq
 
-    def decode_nbest(self, logits, mask, nbest):
+    def decode_nbest(self, logits, mask, nbest, return_scores=False):
         scores, tag_seq = self.crf.viterbi_decode_nbest(logits, mask, nbest)
-        return scores, tag_seq
+        if return_scores:
+            return scores, tag_seq
+        return tag_seq

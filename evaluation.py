@@ -64,6 +64,7 @@ def eval_model_for_set(model, data, vectorizer, using_crf=False):
             model, x_batch, lengths, y_batch, using_crf
         )
         try:
+            # TODO: sometimes this fails for some reason... so need try/except
             padded_pred_tags = vectorizer.map_sequence_back(
                 vectorizer.tag_vocab, padded_pred_tags
             )
@@ -76,10 +77,7 @@ def eval_model_for_set(model, data, vectorizer, using_crf=False):
             vectorizer.tag_vocab, y_batch.data
         )
         for x, y, l in zip(padded_pred_tags, padded_true_tags, lengths):
-            if not using_crf:
-                predicted_tags.append(x[:l])
+            predicted_tags.append(x[:l])
             true_tags.append(y[:l])
-        if using_crf:
-            predicted_tags = padded_pred_tags
         my_scorer(true_tags, predicted_tags, sorted(vectorizer.tag_vocab.keys()))
         return loss
